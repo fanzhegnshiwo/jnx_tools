@@ -1030,6 +1030,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
 
   // 串口状态
   let serialPort=null, serialReader=null, serialKeepReading=false, serialBuf=[];
+  let serialClearBuf=[]; // 清除命令的应答独立收集，避免普通帧消费 serialBuf 后丢失应答
   // 串口单通道查询：新协议把原来 920 字节分成 4 包，每包 230 字节 = 115 uint16；
   // 4 包拼回 SERIAL_SAMPLE_COUNT=460 个采样点（与旧版一致，绘图/复制均不需改）。
   const SERIAL_SAMPLE_COUNT=460;
@@ -2290,6 +2291,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
   const SINGLE_TEST_MAIN_LEGACY = 0x04; // 旧固件兼容
   function isSingleTestMain(b){ return b===SINGLE_TEST_MAIN || b===SINGLE_TEST_MAIN_LEGACY; }
 
+  // 返回已解析帧在输入中的位置和长度；未命中返回 false。
   function parseJncResponse(dv){
     // 通道查询进行中：应答是 237 字节通道帧，绝不在此解析普通测试帧（避免误吞通道帧导致缓冲区被清空）
     if(channelPendingQuery) return false;
@@ -2299,7 +2301,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
     // 注意：设备回包的起始第 2 字节实测可能为 0x0D(普通测试) 或 0x01(积分球)，故不再强校验该字节；
     // 改用 LEN 字段(第4字节，此处恒为 0x1F=31) 定位帧尾 5D 来强校验帧完整性，避免误匹配。
     // 重要：必须精确匹配 LEN===0x1F。通道查询应答帧(5B 0D 0A ED 04 11 ... 5D)第4字节为 0xED(=237)，
-    //       若用 len>=31 会误判其帧尾并 return true 清空 serialBuf，导致通道帧被 parseSerialChannelResponse 漏解析。
+    //       若用 len>=31 会误判其帧尾，导致通道帧被 parseSerialChannelResponse 漏解析。
     for(let i=0; i<=bytes.length-6; i++){
       if(bytes[i]===0x5B && bytes[i+2]===0x0A &&
          isSingleTestMain(bytes[i+4]) && bytes[i+5]===0x11){
@@ -2313,7 +2315,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
               vals.push(toInt16((bytes[dataStart+k*2]<<8)|bytes[dataStart+k*2+1]));
             }
             updateJncTable(vals);
-            return true;
+            return {start:i, length:len};
           }
         }
       }
@@ -2332,7 +2334,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
             vals.push(toInt16((bytes[dataStart+k*2]<<8)|bytes[dataStart+k*2+1]));
           }
           updateJncTable(vals);
-          return true;
+          return {start:i, length:32};
         }
       }
     }
@@ -2344,7 +2346,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
         vals.push(toInt16((bytes[2+k*2]<<8)|bytes[2+k*2+1]));
       }
       updateJncTable(vals);
-      return true;
+      return {start:0, length:26};
     }
 
     return false;
@@ -2354,6 +2356,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
   // 每包 230 字节 = 115 uint16，每通道 4 包共 460 采样点。
   // 帧头 5B 0D 0A [第4字节] 04 11 (6B) + 230 字节数据 + 5D (1B) = 237 字节。
   // 每收一包：把 115 个 uint16 写入对应偏移；未到 4 包则触发下一包请求；最后一包完成合并。
+  // 返回已解析帧的位置和长度，供串口读取循环保留后续字节。
   function parseSerialChannelResponse(dv){
     const bytes=new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset+dv.byteLength));
     const FRAME_LEN=237;
@@ -2383,7 +2386,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
             }
           }, tm);
           sendNextChannelPacket();
-          return true;
+          return {start:i, length:FRAME_LEN};
         }
         // 最后一包：合并完成，落盘到 serialChannelData，复用曲线图
         const idx=chIndex*3+lineIndex;
@@ -2393,7 +2396,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
         console.log('[Serial] 收到 '+label+'：'+vals.length+' 笔数据');
         serialChannelResult.textContent='收到 '+label+'：'+vals.length+' 笔数据';
         clearSerialPending(true);
-        return true;
+        return {start:i, length:FRAME_LEN};
       }
     }
     return false;
@@ -3176,19 +3179,27 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
           if(value && value.byteLength){
             // 累积字节，兼容被拆分的不完整帧
             serialBuf.push(...Array.from(value));
-            if(serialBuf.length>2048) serialBuf=serialBuf.slice(-2048);
+            if(serialClearBusy){
+              serialClearBuf.push(...Array.from(value));
+              if(serialClearBuf.length>256) serialClearBuf=serialClearBuf.slice(-256);
+            }
             // 原始收数据先写入 UI 面板（每 chunk 一行，便于排查底层拆分）；
             // 控制台不在 chunk 级打印，改为整帧识别后统一打印【一条】，避免一条消息被拆成多行
             logSerial('Rx', Array.from(value,b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' '), {quietConsole:true});
-            const dv=new DataView(new Uint8Array(serialBuf).buffer);
-            if(parseJncResponse(dv) || parseSerialChannelResponse(dv)){
-              // 整帧已识别并消费：把缓冲的原始收数据作为【一条】控制台消息打印
+            while(serialBuf.length){
+              const dv=new DataView(new Uint8Array(serialBuf).buffer);
+              const frame=parseJncResponse(dv) || parseSerialChannelResponse(dv);
+              if(!frame) break; // 等待后续字节拼成完整帧
+              const consumed=frame.start+frame.length;
+              // 只消费已解析的帧，保留同一 chunk 中后续的完整帧或半帧
               const now=new Date();
               const ts=now.toLocaleTimeString('zh-CN',{hour12:false})+'.'+String(now.getMilliseconds()).padStart(3,'0');
-              const rawHex=serialBuf.map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+              const rawHex=serialBuf.slice(0,consumed).map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
               console.log('[Serial] Rx @ '+ts+':', rawHex);
-              serialBuf=[]; // 解析到完整帧则清空缓冲
+              serialBuf=serialBuf.slice(consumed);
             }
+            // 未识别的尾部只保留足够拼接下一帧的字节，防止异常数据无限增长。
+            if(serialBuf.length>2048) serialBuf=serialBuf.slice(-2048);
           }
         }
       }catch(err){
@@ -3213,6 +3224,17 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
     clearSerialPending();
     refreshSerialFeatureState(); // 统一按「已断开」禁用发送/查询/清除按钮
     serialBuf=[];
+    serialClearBuf=[];
+  }
+
+  async function writeSerialBytes(bytes){
+    if(!serialPort || !serialPort.writable) throw new Error('串口未连接');
+    const writer=serialPort.writable.getWriter();
+    try{
+      await writer.write(bytes);
+    }finally{
+      writer.releaseLock();
+    }
   }
 
   async function sendSerial(){
@@ -3220,9 +3242,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
     const text=serialSend.value;
     if(!text) return;
     try{
-      const writer=serialPort.writable.getWriter();
-      await writer.write(new TextEncoder().encode(text));
-      writer.releaseLock();
+      await writeSerialBytes(new TextEncoder().encode(text));
       logSerial('Tx', text);
       serialSend.value='';
     }catch(err){
@@ -3245,7 +3265,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
 
   // 由 queryChannel（串口）启动：发送当前包号的请求帧。
   // BLE FFE4 路径已改为独立的 queryChannelViaFfe4 内部循环，不再走此函数。
-  function sendNextChannelPacket(){
+  async function sendNextChannelPacket(){
     if(!channelPendingQuery) return;
     const pending=channelPendingQuery;
     if(!serialPort||!serialPort.writable){
@@ -3259,16 +3279,17 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
     const packet=packetIndex+1;
     const code=buildChannelLinePacketCode(channel, line, packet);
     const frame=buildFrame(0x04,0x01,[code]);
-    const writer=serialPort.writable.getWriter();
-    writer.write(frame).then(()=>{
-      writer.releaseLock();
+    try{
+      await writeSerialBytes(frame);
+      if(channelPendingQuery!==pending) return;
       logSerial('Tx', frameToHex(frame));
       serialChannelResult.textContent='已发送 '+label+' 第'+packet+'/'+SERIAL_PACKET_COUNT+'包，等待应答...';
-    }).catch(err=>{
+    }catch(err){
+      if(channelPendingQuery!==pending) return;
       logSerial('Tx-Err', err.message);
       serialChannelResult.textContent='发送失败';
       clearChannelPending(false);
-    });
+    }
   }
 
   // 查询单个通道：发送 4 包（共 4×230=920 字节 → 4×115=460 采样点），每包最多等 2s。
@@ -3788,18 +3809,16 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
   btnSerialClearData.addEventListener('click', async ()=>{
     if(!serialPort||!serialPort.writable) return;
     const frame=buildFrame(0xA0, 0x02, [0x00]);
-    const snapshotLen=serialBuf.length; // 仅扫描本次发送之后的字节，避免吃到旧帧
+    serialClearBuf=[]; // 仅检查本次命令之后收到的字节
     serialClearBusy=true;
     btnSerialClearData.disabled=true;
     btnSerialClearData.textContent='清除中...';
     try{
-      const writer=serialPort.writable.getWriter();
-      await writer.write(frame);
-      writer.releaseLock();
+      await writeSerialBytes(frame);
       logSerial('Tx', frameToHex(frame));
       serialChannelResult.textContent='清除数据已发送，等待 500ms 后回读...';
       await new Promise(r=>setTimeout(r, 500));
-      const slice=serialBuf.slice(snapshotLen);
+      const slice=serialClearBuf;
       // 匹配应答 5B [X] 0A 08 A0 12 [01/02] 5D
       let result=null;
       for(let i=0; i<=slice.length-8; i++){
@@ -3897,7 +3916,7 @@ const btnSerialClearData=document.getElementById('btnSerialClearData');
       try {
         if (window.caches) {
           const keys = await caches.keys();
-          await Promise.all(keys.map(k => caches.delete(k)));
+          await Promise.all(keys.filter(k => k.startsWith('jnx-tools-')).map(k => caches.delete(k)));
         }
         if (navigator.serviceWorker) {
           const reg = await navigator.serviceWorker.getRegistration();

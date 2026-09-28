@@ -70,6 +70,16 @@ python -m http.server 8000
 http://localhost:8000/
 ```
 
+## 回归检查
+
+安装 Node.js 后，在项目目录运行：
+
+```bash
+node --test tests/regression.test.js
+```
+
+检查覆盖 JNC 串口分包与连续帧、写入失败后的锁释放，以及 PWA 缓存隔离和二进制更新检测。BLE 与串口的设备时序仍需连接实物验证。
+
 ## PWA 安装
 
 本项目已 PWA 化，支持像小程序/桌面应用一样安装：

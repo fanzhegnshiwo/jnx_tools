@@ -1,4 +1,5 @@
-const CACHE_NAME = 'jnx-tools-v2-72';
+const CACHE_PREFIX = 'jnx-tools-';
+const CACHE_NAME = 'jnx-tools-v2-73';
 const ASSETS = [
   './',
   './index.html',
@@ -36,7 +37,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((key) => key !== CACHE_NAME)
+          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
           .map((key) => caches.delete(key))
       )
     ).then(() => self.clients.claim())
@@ -61,11 +62,13 @@ self.addEventListener('fetch', (event) => {
       if (!resp) return null;            // 离线：保持缓存兜底
       if (cached && resp.status === 304) return resp; // 服务器确认一致，不下载内容
       if (resp.status !== 200) return resp;
-      // 200：可能已更新。与本地缓存做内容比对（兼容不支持条件请求的服务器）
+      // 200：按字节比较，避免 PNG 等二进制文件经文本解码后出现误判。
       if (cached) {
-        const newBody = await resp.clone().text();
-        const oldBody = await cached.clone().text();
-        if (oldBody === newBody) return resp; // 内容一致，不更新缓存、不提示
+        const newBody = new Uint8Array(await resp.clone().arrayBuffer());
+        const oldBody = new Uint8Array(await cached.clone().arrayBuffer());
+        if (oldBody.length === newBody.length && oldBody.every((byte, i) => byte === newBody[i])) {
+          return resp; // 内容一致，不更新缓存、不提示
+        }
         // 内容与本地不一致：写入新内容，并通知页面显示「刷新缓存」按钮（何时刷新由用户决定）
         await cache.put(event.request, resp.clone());
         const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
