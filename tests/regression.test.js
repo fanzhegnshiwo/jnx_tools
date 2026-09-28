@@ -112,17 +112,19 @@ test('JNC serial writer releases its lock when write fails', async () => {
 test('Service Worker activation preserves caches belonging to other apps', async () => {
   const handlers = {};
   const deleted = [];
+  const swSource = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
+  const currentCache = swSource.match(/const CACHE_NAME = '([^']+)'/)[1];
   const context = {
     self: {
       addEventListener: (name, handler) => { handlers[name] = handler; },
       clients: { claim: async () => {} },
     },
     caches: {
-      keys: async () => ['jnx-tools-v2-72', 'jnx-tools-v2-73', 'other-app-v1'],
+      keys: async () => ['jnx-tools-v2-72', currentCache, 'other-app-v1'],
       delete: async key => { deleted.push(key); },
     },
   };
-  vm.runInNewContext(fs.readFileSync(path.join(root, 'sw.js'), 'utf8'), context);
+  vm.runInNewContext(swSource, context);
   let activation;
   handlers.activate({ waitUntil: promise => { activation = promise; } });
   await activation;

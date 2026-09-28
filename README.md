@@ -10,7 +10,7 @@ JNx 系列产品辅助工具集合，数据均在本地处理，不上传任何�
 | JNA 工具 | 自动连接 JNA 开头的 BLE 设备，并以 1000ms 间隔订阅 FFE1 数据 | [JNA_tools.html](JNA_tools.html) |
 | JNA Plus 工具 | JNA-Plus 系列：单通道 26 字节协议（状态/时间/结果/计时/加样/完成/版本号/T1~T6），FFE2 仅保留重启/关机 | [JNA_Plus_Tool.html](JNA_Plus_Tool.html) |
 | JNC 工具 | 连接 JNC 开头的 BLE 设备，通过 FFE2 命令轮询 12 通道数据（C/B/T） | [JNC_tools.html](JNC_tools.html) |
-| JNB 工具 | JNB 系列：单通道 27 字节协议（状态/时间/T1/T2 双结果/计时/加样/完成/版本号/C/T_2/B/T_1 实时/蓝牙确认），FFE2 支持点灯 T1~T4、重启、关机 | [JNB_Tool.html](JNB_Tool.html) |
+| JNB 工具 | JNB 系列：单通道 27 字节协议，连接后自动更新数据并绘制 C/T2/B/T1 实时曲线；FFE2 支持点灯 T1~T4、重启、关机 | [JNB_Tool.html](JNB_Tool.html) |
 
 ## 目录说明
 
@@ -75,10 +75,10 @@ http://localhost:8000/
 安装 Node.js 后，在项目目录运行：
 
 ```bash
-node --test tests/regression.test.js
+node --test tests/*.test.js
 ```
 
-检查覆盖 JNC 串口分包与连续帧、写入失败后的锁释放，以及 PWA 缓存隔离和二进制更新检测。BLE 与串口的设备时序仍需连接实物验证。
+检查覆盖 JNB 数据曲线和自动更新状态、JNC 串口分包与连续帧、写入失败后的锁释放，以及 PWA 缓存隔离和二进制更新检测。BLE 与串口的设备时序仍需连接实物验证。
 
 ## PWA 安装
 

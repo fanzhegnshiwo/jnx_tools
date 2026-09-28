@@ -98,7 +98,7 @@
   .qr-result-text{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:'Consolas',monospace;font-size:.9rem;color:var(--text);word-break:break-all;white-space:pre-wrap;max-height:38vh;overflow:auto;}
   .qr-result-actions{display:flex;gap:8px;margin-top:12px;justify-content:flex-end;flex-wrap:wrap;}
 
-  .card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;}
+  .card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;min-width:0;}
   .card-title{font-size:1.05rem;font-weight:600;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
   /* 特征发现状态徽标 */
   #btnPauseJnb{margin-left:auto;}
@@ -117,7 +117,7 @@
 
   /* ---- BLE page ---- */
   .ble-grid{display:grid;grid-template-columns:320px 1fr;gap:20px;margin-top:16px;}
-  @media(max-width:900px){.ble-grid{grid-template-columns:1fr;}}
+  @media(max-width:900px){.ble-grid{grid-template-columns:minmax(0,1fr);}}
 
   .ble-toolbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
   .name-filter{display:flex;align-items:center;gap:6px;}
@@ -343,6 +343,19 @@
     .field-value{font-size:1rem;}
     .field-raw{font-size:.65rem;}
   }
+
+  /* JNB 实时数据曲线图：布局和交互与 JNC 数据曲线图保持一致 */
+  .jnb-chart-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .jnb-chart-hint{font-size:.78rem;color:var(--text-muted);font-weight:400;}
+  .jnb-chart-legend{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 8px;font-size:.78rem;color:var(--text-muted);}
+  .jnb-chart-legend span{display:inline-flex;align-items:center;gap:5px;}
+  .jnb-chart-legend i{width:14px;height:3px;border-radius:2px;display:inline-block;}
+  .jnb-chart-canvas{width:100%;max-width:100%;height:300px;display:block;border:1px solid var(--border);border-radius:8px;background:#fbfdff;cursor:crosshair;touch-action:pan-y;}
+  .jnb-chart-section.expanded{position:fixed;inset:0;z-index:1000;margin:0;border-radius:0;padding:14px 18px;display:flex;flex-direction:column;}
+  .jnb-chart-section.expanded .jnb-chart-body{flex:1;display:flex;flex-direction:column;min-height:0;}
+  .jnb-chart-section.expanded .jnb-chart-canvas{flex:1;height:100%;min-height:0;}
+  .jnb-chart-tooltip{position:fixed;pointer-events:none;z-index:1100;background:rgba(17,24,39,.92);color:#fff;padding:6px 9px;border-radius:6px;font-size:12px;line-height:1.5;white-space:pre;box-shadow:0 2px 8px rgba(0,0,0,.25);display:none;}
+  @media(max-width:600px){.jnb-chart-canvas{height:240px;}.jnb-chart-actions{width:100%;}}
 </style>
 </head>
 <body>
@@ -424,6 +437,27 @@
           <div class="field-box" data-key="btConfirm"><div class="field-label">蓝牙确认</div><div class="field-raw">--</div><div class="field-value">--</div></div>
         </div>
         <div id="jnbFieldsEmpty" style="color:var(--text-light);text-align:center;padding:24px 0;font-size:.875rem;">等待符合格式的数据包...</div>
+      </div>
+
+      <div class="card jnb-chart-section" id="jnbChartSection">
+        <div class="card-title">
+          <span>数据曲线图（C / T2 / B / T1 · 最近 460 点）</span>
+          <div class="jnb-chart-actions">
+            <span class="jnb-chart-hint" id="jnbChartHint">等待数据…</span>
+            <button class="btn btn-sm" id="btnJnbChartCopy" type="button" disabled>复制数据</button>
+            <button class="btn btn-warn btn-sm" id="btnJnbChartClear" type="button" disabled>清空</button>
+            <button class="btn btn-sm" id="btnJnbChartExpand" type="button">⛶ 全屏</button>
+          </div>
+        </div>
+        <div class="jnb-chart-body">
+          <div class="jnb-chart-legend">
+            <span><i style="background:#ef4444"></i>C</span>
+            <span><i style="background:#22c55e"></i>T2</span>
+            <span><i style="background:#3b82f6"></i>B</span>
+            <span><i style="background:#a855f7"></i>T1</span>
+          </div>
+          <canvas class="jnb-chart-canvas" id="jnbChartCanvas" aria-label="C、T2、B、T1 实时数据曲线图"></canvas>
+        </div>
       </div>
 
       <div class="card collapsible-card collapsed" id="logCard">
@@ -569,6 +603,12 @@ const Utils = {
   const btnReboot=document.getElementById('btnReboot');
   const btnShutdown=document.getElementById('btnShutdown');
   const btnPauseJnb=document.getElementById('btnPauseJnb');
+  const jnbChartSection=document.getElementById('jnbChartSection');
+  const jnbChartCanvas=document.getElementById('jnbChartCanvas');
+  const jnbChartHint=document.getElementById('jnbChartHint');
+  const btnJnbChartCopy=document.getElementById('btnJnbChartCopy');
+  const btnJnbChartClear=document.getElementById('btnJnbChartClear');
+  const btnJnbChartExpand=document.getElementById('btnJnbChartExpand');
   const ffe1Badge=document.getElementById('ffe1Badge');
   const ffe2Badge=document.getElementById('ffe2Badge');
   const resultDevice=document.getElementById('resultDevice');
@@ -585,8 +625,20 @@ const Utils = {
   let ffe2Char=null;
   let ffe1Char=null;       // FFE1 特征引用（用于停止订阅/轮询）
   let ffe1Busy=false;      // 读保护：上一次 readValue 未完成时不发起新读
-  let ffe1FeedActive=false; // FFE1 订阅/轮询是否已启动（点击“开始更新”后为 true）
+  let ffe1FeedActive=false; // FFE1 订阅/轮询是否已启动
   let jnbPaused=true;
+  const JNB_CHART_MAX_POINTS=460;
+  const JNB_CHART_FIELDS=['C_live','T2_live','B_live','T1_live'];
+  const JNB_CHART_NAMES=['C','T2','B','T1'];
+  const JNB_CHART_COLORS=['#ef4444','#22c55e','#3b82f6','#a855f7'];
+  const JNB_CHART_PAD={L:48,R:14,T:14,B:28};
+  let jnbChartData=[[],[],[],[]];
+  let jnbChartStart=0;
+  let jnbChartHover=null;
+  let jnbChartRaf=0;
+  const jnbChartTooltip=document.createElement('div');
+  jnbChartTooltip.className='jnb-chart-tooltip';
+  document.body.appendChild(jnbChartTooltip);
   let bleRawLines=[];
   const activePolls=new Map(); // characteristic -> intervalId
   const ffe2ResponseBuffer=[]; // FFE2 通知缓存，用于命令响应匹配
@@ -752,14 +804,14 @@ const Utils = {
       setStatus('connected', device.name||'未知设备');
       showBleNotice(null);
       logToPanel('SYS','discover',`特征发现完成：FFE1/FFE2 均已就绪（${result.ms}ms）`);
-      if(!jnbPaused) await startFFE1Feed();
+      await startJnbUpdates();
       return true;
     }
     // FFE1 有了但 FFE2 缺：可能刚连上未就绪，给提示 + 重试入口，不断开
     setStatus('partial', device.name||'未知设备');
     showBleNotice(`未发现特征：${result.missing.join('、')}。设备可能刚连上尚未就绪，可点「重试发现特征」。`);
     logToPanel('ERR','discover',`未发现：${result.missing.join('、')}（用时 ${result.ms}ms）`);
-    if(!jnbPaused) await startFFE1Feed();
+    await startJnbUpdates();
     return false;
   }
 
@@ -834,7 +886,7 @@ const Utils = {
         setStatus('connected', device.name||'未知设备');
         showBleNotice(null);
         logToPanel('SYS','discover',`重试成功：FFE1/FFE2 均已就绪（${result.ms}ms）`);
-        if(!jnbPaused) await startFFE1Feed();
+        if(!jnbPaused) await startJnbUpdates();
       }else{
         setStatus('partial', device.name||'未知设备');
         showBleNotice(`仍未发现：${result.missing.join('、')}。可断开后重新连接设备。`);
@@ -899,10 +951,8 @@ const Utils = {
     jnbFields.querySelectorAll('.field-box').forEach(el=>el.classList.remove('flash'));
     // 复位 FFE2 命令状态（保留命令日志）
     ffe2Char=null;
-    // 复位暂停状态（默认暂停，需手动点击“开始更新”才解析）
-    jnbPaused=true;
-    btnPauseJnb.textContent='开始更新';
-    btnPauseJnb.classList.add('btn-warn');
+    setJnbPaused(true);
+    resetJnbChart();
     // 断开后 FFE1/FFE2 均需重新发现，重新锁定两个面板
     refreshFeatureState();
     setStatus('disconnected','');
@@ -977,7 +1027,7 @@ const Utils = {
   function stopFFE1Feed(){
     activePolls.forEach(id=>clearInterval(id));
     activePolls.clear();
-    if(ffe1Char){
+    if(ffe1Char && ffe1FeedActive){
       try{
         ffe1Char.removeEventListener('characteristicvaluechanged', onCharChanged);
         if(ffe1Char.stopNotifications) ffe1Char.stopNotifications().catch(()=>{});
@@ -998,8 +1048,10 @@ const Utils = {
     cmdLog.innerHTML='';
     // FFE2 响应缓存
     ffe2ResponseBuffer.length=0;
-    // FFE1 订阅状态（默认暂停，需点击“开始更新”才订阅）
+    // 新连接从空白数据开始，随后由连接流程自动订阅 FFE1
     stopFFE1Feed();
+    setJnbPaused(true);
+    resetJnbChart();
     // 解析数据面板
     jnbFields.style.display='none';
     jnbFieldsEmpty.style.display='block';
@@ -1060,9 +1112,38 @@ const Utils = {
     return null;
   }
 
-  // ---- 启动 FFE1 订阅/轮询（点击“开始更新”时调用） ----
+  function setJnbPaused(paused){
+    jnbPaused=paused;
+    btnPauseJnb.textContent=paused?'开始更新':'暂停更新';
+    btnPauseJnb.classList.toggle('btn-warn', paused);
+  }
+
+  async function startJnbUpdates(){
+    if(!device || !device.gatt || !device.gatt.connected) return false;
+    btnPauseJnb.disabled=true;
+    setJnbPaused(false);
+    try{
+      const started=await startFFE1Feed();
+      if(!started || !device || !device.gatt.connected || jnbPaused){
+        stopFFE1Feed();
+        setJnbPaused(true);
+        return false;
+      }
+      return true;
+    }catch(err){
+      stopFFE1Feed();
+      setJnbPaused(true);
+      showBleNotice('启动 FFE1 数据更新失败：'+err.message);
+      logToPanel('ERR','FFE1','启动更新失败：'+err.message);
+      return false;
+    }finally{
+      refreshFeatureState();
+    }
+  }
+
+  // ---- 启动 FFE1 订阅/轮询（连接完成后自动调用，也供手动恢复） ----
   async function startFFE1Feed(){
-    if(ffe1FeedActive) return; // 已在订阅，避免重复
+    if(ffe1FeedActive) return true; // 已在订阅，避免重复
     // 补偿发现：FFE1 偶尔在连接时未枚举到，这里再试一次（带重试），并给出明确提示
     if(!ffe1Char && device && device.gatt && device.gatt.connected){
       showBleNotice('正在查找 FFE1…');
@@ -1075,7 +1156,7 @@ const Utils = {
     }
     if(!ffe1Char){
       showBleNotice('未找到 FFE1 特征，无法开始跟踪。可点「重试发现特征」。');
-      return;
+      return false;
     }
     if(bleNotice && !bleNotice.hidden) showBleNotice(null);
     const shortU=Utils.shortUuid(FFE1_SERVICE);
@@ -1088,7 +1169,7 @@ const Utils = {
         target.addEventListener('characteristicvaluechanged',onCharChanged);
         logToPanel('Sub', shortU, '已开启通知订阅（内容变化自动触发）');
         ffe1FeedActive=true;
-        return; // 已有设备推送，无需轮询
+        return true; // 已有设备推送，无需轮询
       }catch(err){
         console.warn('notify 订阅失败，回退到轮询:',err);
       }
@@ -1118,7 +1199,10 @@ const Utils = {
       activePolls.set(target, setInterval(doPoll, POLL_INTERVAL));
       logToPanel('Sub', shortU, '已回退到 '+POLL_INTERVAL+'ms 轮询订阅');
       ffe1FeedActive=true;
+      return true;
     }
+    showBleNotice('FFE1 不支持通知或读取，无法自动更新数据。');
+    return false;
   }
 
   function formatDataView(dv){
@@ -1359,10 +1443,188 @@ const Utils = {
     };
   }
 
+  function resetJnbChart(){
+    jnbChartData=[[],[],[],[]];
+    jnbChartStart=0;
+    jnbChartHover=null;
+    jnbChartTooltip.style.display='none';
+    jnbChartHint.textContent='等待数据…';
+    btnJnbChartCopy.disabled=true;
+    btnJnbChartClear.disabled=true;
+    scheduleJnbChartRedraw();
+  }
+
+  function appendJnbChartFrame(obj){
+    JNB_CHART_FIELDS.forEach((field,i)=>jnbChartData[i].push(obj[field]));
+    if(jnbChartData[0].length>JNB_CHART_MAX_POINTS){
+      jnbChartData.forEach(series=>series.shift());
+      jnbChartStart++;
+    }
+    const total=jnbChartStart+jnbChartData[0].length;
+    jnbChartHint.textContent='已采 '+total+' 点 · 显示最近 '+jnbChartData[0].length+' 点';
+    btnJnbChartCopy.disabled=false;
+    btnJnbChartClear.disabled=false;
+    scheduleJnbChartRedraw();
+  }
+
+  function drawJnbChart(){
+    const canvas=jnbChartCanvas;
+    const dpr=window.devicePixelRatio||1;
+    const width=canvas.clientWidth||canvas.parentElement.clientWidth||300;
+    const height=canvas.clientHeight||300;
+    canvas.width=Math.round(width*dpr);
+    canvas.height=Math.round(height*dpr);
+    const ctx=canvas.getContext('2d');
+    if(!ctx) return;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.fillStyle='#fbfdff';
+    ctx.fillRect(0,0,width,height);
+
+    const pad=JNB_CHART_PAD;
+    const plotW=Math.max(1,width-pad.L-pad.R);
+    const plotH=Math.max(1,height-pad.T-pad.B);
+    const count=jnbChartData[0].length;
+    let ymin=Infinity, ymax=-Infinity;
+    for(const series of jnbChartData){
+      for(const value of series){
+        if(value<ymin) ymin=value;
+        if(value>ymax) ymax=value;
+      }
+    }
+    if(!count){ ymin=0; ymax=1; }
+    if(ymin===ymax){ ymin-=1; ymax+=1; }
+    const margin=count?(ymax-ymin)*0.05:0;
+    ymin-=margin; ymax+=margin;
+    const xAt=i=>pad.L+(count>1?i/(count-1):0)*plotW;
+    const yAt=value=>pad.T+plotH*(1-(value-ymin)/(ymax-ymin));
+
+    ctx.strokeStyle='#e5e7eb';
+    ctx.fillStyle='#94a3b8';
+    ctx.font='11px sans-serif';
+    ctx.lineWidth=1;
+    for(let tick=0;tick<=4;tick++){
+      const y=pad.T+plotH*tick/4;
+      ctx.beginPath(); ctx.moveTo(pad.L,y); ctx.lineTo(pad.L+plotW,y); ctx.stroke();
+      ctx.textAlign='right'; ctx.textBaseline='middle';
+      const value=ymax-(ymax-ymin)*tick/4;
+      const label=(ymax-ymin)/4<1?value.toFixed(1):String(Math.round(value));
+      ctx.fillText(label,pad.L-6,y);
+    }
+    if(ymin<0 && ymax>0){
+      ctx.save(); ctx.strokeStyle='#cbd5e1'; ctx.setLineDash([3,3]);
+      const y=yAt(0);
+      ctx.beginPath(); ctx.moveTo(pad.L,y); ctx.lineTo(pad.L+plotW,y); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.textAlign='center'; ctx.textBaseline='top';
+    ctx.fillText(String(count?jnbChartStart+1:0),pad.L,pad.T+plotH+6);
+    if(count>1) ctx.fillText(String(jnbChartStart+count),pad.L+plotW,pad.T+plotH+6);
+    if(!count){
+      ctx.fillStyle='#94a3b8'; ctx.font='13px sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('等待 FFE1 数据…',pad.L+plotW/2,pad.T+plotH/2);
+      return;
+    }
+
+    jnbChartData.forEach((series,k)=>{
+      ctx.strokeStyle=JNB_CHART_COLORS[k]; ctx.lineWidth=1.6; ctx.lineJoin='round';
+      ctx.beginPath();
+      series.forEach((value,i)=>{
+        if(i===0) ctx.moveTo(xAt(i),yAt(value));
+        else ctx.lineTo(xAt(i),yAt(value));
+      });
+      ctx.stroke();
+      if(count===1){
+        ctx.fillStyle=JNB_CHART_COLORS[k];
+        ctx.beginPath(); ctx.arc(xAt(0),yAt(series[0]),2.5,0,Math.PI*2); ctx.fill();
+      }
+    });
+    if(jnbChartHover!=null && jnbChartHover<count){
+      const x=xAt(jnbChartHover);
+      ctx.save(); ctx.strokeStyle='rgba(71,85,105,.5)'; ctx.setLineDash([4,3]);
+      ctx.beginPath(); ctx.moveTo(x,pad.T); ctx.lineTo(x,pad.T+plotH); ctx.stroke();
+      ctx.setLineDash([]);
+      jnbChartData.forEach((series,k)=>{
+        ctx.fillStyle=JNB_CHART_COLORS[k];
+        ctx.beginPath(); ctx.arc(x,yAt(series[jnbChartHover]),3.5,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();
+      });
+      ctx.restore();
+    }
+  }
+
+  function scheduleJnbChartRedraw(){
+    if(jnbChartRaf) return;
+    jnbChartRaf=requestAnimationFrame(()=>{ jnbChartRaf=0; drawJnbChart(); });
+  }
+
+  function showJnbChartTooltip(event){
+    const count=jnbChartData[0].length;
+    if(!count) return;
+    const rect=jnbChartCanvas.getBoundingClientRect();
+    const plotW=Math.max(1,rect.width-JNB_CHART_PAD.L-JNB_CHART_PAD.R);
+    const ratio=(event.clientX-rect.left-JNB_CHART_PAD.L)/plotW;
+    const index=Math.max(0,Math.min(count-1,Math.round(ratio*(count-1))));
+    jnbChartHover=index;
+    scheduleJnbChartRedraw();
+    jnbChartTooltip.textContent='采样 #'+(jnbChartStart+index+1)+'\n'+
+      JNB_CHART_NAMES.map((name,k)=>name+': '+jnbChartData[k][index]).join('\n');
+    jnbChartTooltip.style.display='block';
+    const tw=jnbChartTooltip.offsetWidth, th=jnbChartTooltip.offsetHeight;
+    const left=event.clientX+tw+14>window.innerWidth-8 ? event.clientX-tw-14 : event.clientX+14;
+    const top=event.clientY+th+14>window.innerHeight-8 ? event.clientY-th-14 : event.clientY+14;
+    jnbChartTooltip.style.left=Math.max(8,left)+'px';
+    jnbChartTooltip.style.top=Math.max(8,top)+'px';
+  }
+
+  function hideJnbChartTooltip(){
+    if(jnbChartHover!=null){ jnbChartHover=null; scheduleJnbChartRedraw(); }
+    jnbChartTooltip.style.display='none';
+  }
+
+  jnbChartCanvas.addEventListener('pointermove',showJnbChartTooltip);
+  jnbChartCanvas.addEventListener('pointerdown',showJnbChartTooltip);
+  jnbChartCanvas.addEventListener('pointerleave',hideJnbChartTooltip);
+  btnJnbChartClear.addEventListener('click',resetJnbChart);
+  btnJnbChartCopy.addEventListener('click',async ()=>{
+    const count=jnbChartData[0].length;
+    if(!count) return;
+    const rows=['采样\tC\tT2\tB\tT1'];
+    for(let i=0;i<count;i++){
+      rows.push([jnbChartStart+i+1,...jnbChartData.map(series=>series[i])].join('\t'));
+    }
+    const value=rows.join('\n');
+    try{
+      await navigator.clipboard.writeText(value);
+      btnJnbChartCopy.textContent='已复制';
+    }catch(err){
+      const input=document.createElement('textarea');
+      input.value=value; document.body.appendChild(input); input.select();
+      let copied=false;
+      try{ copied=document.execCommand('copy'); }
+      catch(_){ /* 浏览器不支持旧复制接口 */ }
+      finally{ input.remove(); }
+      btnJnbChartCopy.textContent=copied?'已复制':'复制失败';
+    }
+    setTimeout(()=>{ btnJnbChartCopy.textContent='复制数据'; },1500);
+  });
+  btnJnbChartExpand.addEventListener('click',()=>{
+    const expanded=jnbChartSection.classList.toggle('expanded');
+    btnJnbChartExpand.textContent=expanded?'⤡ 还原':'⛶ 全屏';
+    hideJnbChartTooltip();
+    scheduleJnbChartRedraw();
+  });
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape' && jnbChartSection.classList.contains('expanded')) btnJnbChartExpand.click();
+  });
+  window.addEventListener('resize',scheduleJnbChartRedraw);
+  scheduleJnbChartRedraw();
+
   function handleJnbPacket(dv){
     const obj=parseJnb(dv);
     if(obj&&!jnbPaused){
       updateJnbTable(obj, dv);
+      appendJnbChartFrame(obj);
     }
     // 数据日志始终写入，不受暂停影响
     logToPanel(obj?'Data':'Raw', Utils.shortUuid(FFE1_SERVICE), formatDataView(dv)+' ['+dv.byteLength+'B]');
@@ -1423,14 +1685,11 @@ const Utils = {
 
   // ---- Pause/Resume JNB parsing ----
   btnPauseJnb.addEventListener('click', async ()=>{
-    jnbPaused=!jnbPaused;
-    btnPauseJnb.textContent=jnbPaused?'开始更新':'暂停更新';
-    if(jnbPaused){
-      btnPauseJnb.classList.add('btn-warn');
+    if(!jnbPaused){
+      setJnbPaused(true);
       stopFFE1Feed(); // 暂停：停止 FFE1 订阅/轮询
     }else{
-      btnPauseJnb.classList.remove('btn-warn');
-      await startFFE1Feed(); // 开始更新：启动 FFE1 订阅/轮询
+      await startJnbUpdates();
     }
   });
 
