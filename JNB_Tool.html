@@ -351,6 +351,10 @@
   .jnb-chart-legend span{display:inline-flex;align-items:center;gap:5px;}
   .jnb-chart-legend i{width:14px;height:3px;border-radius:2px;display:inline-block;}
   .jnb-chart-canvas{width:100%;max-width:100%;height:300px;display:block;border:1px solid var(--border);border-radius:8px;background:#fbfdff;cursor:crosshair;touch-action:pan-y;}
+  .jnb-chart-nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px;font-size:.78rem;color:var(--text-muted);}
+  .jnb-chart-range{flex:1 1 140px;min-width:100px;accent-color:var(--accent);cursor:pointer;}
+  .jnb-chart-range:disabled{cursor:not-allowed;}
+  .jnb-chart-range-info{white-space:nowrap;}
   .jnb-chart-section.expanded{position:fixed;inset:0;z-index:1000;margin:0;border-radius:0;padding:14px 18px;display:flex;flex-direction:column;}
   .jnb-chart-section.expanded .jnb-chart-body{flex:1;display:flex;flex-direction:column;min-height:0;}
   .jnb-chart-section.expanded .jnb-chart-canvas{flex:1;height:100%;min-height:0;}
@@ -441,10 +445,10 @@
 
       <div class="card jnb-chart-section" id="jnbChartSection">
         <div class="card-title">
-          <span>数据曲线图（C / T2 / B / T1 · 最近 460 点）</span>
+          <span>数据曲线图（C / T2 / B / T1）</span>
           <div class="jnb-chart-actions">
             <span class="jnb-chart-hint" id="jnbChartHint">等待数据…</span>
-            <button class="btn btn-sm" id="btnJnbChartCopy" type="button" disabled>复制数据</button>
+            <button class="btn btn-sm" id="btnJnbChartCopy" type="button" disabled>复制全部数据</button>
             <button class="btn btn-warn btn-sm" id="btnJnbChartClear" type="button" disabled>清空</button>
             <button class="btn btn-sm" id="btnJnbChartExpand" type="button">⛶ 全屏</button>
           </div>
@@ -457,6 +461,12 @@
             <span><i style="background:#a855f7"></i>T1</span>
           </div>
           <canvas class="jnb-chart-canvas" id="jnbChartCanvas" aria-label="C、T2、B、T1 实时数据曲线图"></canvas>
+          <div class="jnb-chart-nav">
+            <button class="btn btn-sm" id="btnJnbChartEarliest" type="button" disabled>最早</button>
+            <input class="jnb-chart-range" id="jnbChartRange" type="range" min="0" max="0" value="0" step="1" aria-label="选择曲线图采样区间" disabled>
+            <button class="btn btn-sm" id="btnJnbChartLatest" type="button" disabled>最新</button>
+            <span class="jnb-chart-range-info" id="jnbChartRangeInfo">尚无采样</span>
+          </div>
         </div>
       </div>
 
@@ -609,6 +619,10 @@ const Utils = {
   const btnJnbChartCopy=document.getElementById('btnJnbChartCopy');
   const btnJnbChartClear=document.getElementById('btnJnbChartClear');
   const btnJnbChartExpand=document.getElementById('btnJnbChartExpand');
+  const btnJnbChartEarliest=document.getElementById('btnJnbChartEarliest');
+  const btnJnbChartLatest=document.getElementById('btnJnbChartLatest');
+  const jnbChartRange=document.getElementById('jnbChartRange');
+  const jnbChartRangeInfo=document.getElementById('jnbChartRangeInfo');
   const ffe1Badge=document.getElementById('ffe1Badge');
   const ffe2Badge=document.getElementById('ffe2Badge');
   const resultDevice=document.getElementById('resultDevice');
@@ -627,13 +641,14 @@ const Utils = {
   let ffe1Busy=false;      // 读保护：上一次 readValue 未完成时不发起新读
   let ffe1FeedActive=false; // FFE1 订阅/轮询是否已启动
   let jnbPaused=true;
-  const JNB_CHART_MAX_POINTS=460;
+  const JNB_CHART_WINDOW_POINTS=460;
   const JNB_CHART_FIELDS=['C_live','T2_live','B_live','T1_live'];
   const JNB_CHART_NAMES=['C','T2','B','T1'];
   const JNB_CHART_COLORS=['#ef4444','#22c55e','#3b82f6','#a855f7'];
   const JNB_CHART_PAD={L:48,R:14,T:14,B:28};
   let jnbChartData=[[],[],[],[]];
-  let jnbChartStart=0;
+  let jnbChartWindowStart=0;
+  let jnbChartFollowLatest=true;
   let jnbChartHover=null;
   let jnbChartRaf=0;
   const jnbChartTooltip=document.createElement('div');
@@ -1443,25 +1458,36 @@ const Utils = {
     };
   }
 
+  function updateJnbChartNavigation(){
+    const total=jnbChartData[0].length;
+    const maxStart=Math.max(0,total-JNB_CHART_WINDOW_POINTS);
+    if(jnbChartFollowLatest) jnbChartWindowStart=maxStart;
+    else jnbChartWindowStart=Math.min(jnbChartWindowStart,maxStart);
+    const end=Math.min(total,jnbChartWindowStart+JNB_CHART_WINDOW_POINTS);
+    jnbChartHint.textContent=total?'已采 '+total+' 点':'等待数据…';
+    jnbChartRangeInfo.textContent=total?'第 '+(jnbChartWindowStart+1)+'–'+end+' / '+total+' 点':'尚无采样';
+    jnbChartRange.max=String(maxStart);
+    jnbChartRange.value=String(jnbChartWindowStart);
+    jnbChartRange.disabled=maxStart===0;
+    btnJnbChartEarliest.disabled=jnbChartWindowStart===0;
+    btnJnbChartLatest.disabled=jnbChartWindowStart===maxStart;
+  }
+
   function resetJnbChart(){
     jnbChartData=[[],[],[],[]];
-    jnbChartStart=0;
+    jnbChartWindowStart=0;
+    jnbChartFollowLatest=true;
     jnbChartHover=null;
     jnbChartTooltip.style.display='none';
-    jnbChartHint.textContent='等待数据…';
     btnJnbChartCopy.disabled=true;
     btnJnbChartClear.disabled=true;
+    updateJnbChartNavigation();
     scheduleJnbChartRedraw();
   }
 
   function appendJnbChartFrame(obj){
     JNB_CHART_FIELDS.forEach((field,i)=>jnbChartData[i].push(obj[field]));
-    if(jnbChartData[0].length>JNB_CHART_MAX_POINTS){
-      jnbChartData.forEach(series=>series.shift());
-      jnbChartStart++;
-    }
-    const total=jnbChartStart+jnbChartData[0].length;
-    jnbChartHint.textContent='已采 '+total+' 点 · 显示最近 '+jnbChartData[0].length+' 点';
+    updateJnbChartNavigation();
     btnJnbChartCopy.disabled=false;
     btnJnbChartClear.disabled=false;
     scheduleJnbChartRedraw();
@@ -1483,10 +1509,12 @@ const Utils = {
     const pad=JNB_CHART_PAD;
     const plotW=Math.max(1,width-pad.L-pad.R);
     const plotH=Math.max(1,height-pad.T-pad.B);
-    const count=jnbChartData[0].length;
+    const start=jnbChartWindowStart;
+    const count=Math.min(JNB_CHART_WINDOW_POINTS,jnbChartData[0].length-start);
     let ymin=Infinity, ymax=-Infinity;
     for(const series of jnbChartData){
-      for(const value of series){
+      for(let i=start;i<start+count;i++){
+        const value=series[i];
         if(value<ymin) ymin=value;
         if(value>ymax) ymax=value;
       }
@@ -1517,8 +1545,8 @@ const Utils = {
       ctx.restore();
     }
     ctx.textAlign='center'; ctx.textBaseline='top';
-    ctx.fillText(String(count?jnbChartStart+1:0),pad.L,pad.T+plotH+6);
-    if(count>1) ctx.fillText(String(jnbChartStart+count),pad.L+plotW,pad.T+plotH+6);
+    ctx.fillText(String(count?start+1:0),pad.L,pad.T+plotH+6);
+    if(count>1) ctx.fillText(String(start+count),pad.L+plotW,pad.T+plotH+6);
     if(!count){
       ctx.fillStyle='#94a3b8'; ctx.font='13px sans-serif';
       ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -1529,14 +1557,15 @@ const Utils = {
     jnbChartData.forEach((series,k)=>{
       ctx.strokeStyle=JNB_CHART_COLORS[k]; ctx.lineWidth=1.6; ctx.lineJoin='round';
       ctx.beginPath();
-      series.forEach((value,i)=>{
+      for(let i=0;i<count;i++){
+        const value=series[start+i];
         if(i===0) ctx.moveTo(xAt(i),yAt(value));
         else ctx.lineTo(xAt(i),yAt(value));
-      });
+      }
       ctx.stroke();
       if(count===1){
         ctx.fillStyle=JNB_CHART_COLORS[k];
-        ctx.beginPath(); ctx.arc(xAt(0),yAt(series[0]),2.5,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(xAt(0),yAt(series[start]),2.5,0,Math.PI*2); ctx.fill();
       }
     });
     if(jnbChartHover!=null && jnbChartHover<count){
@@ -1546,7 +1575,7 @@ const Utils = {
       ctx.setLineDash([]);
       jnbChartData.forEach((series,k)=>{
         ctx.fillStyle=JNB_CHART_COLORS[k];
-        ctx.beginPath(); ctx.arc(x,yAt(series[jnbChartHover]),3.5,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x,yAt(series[start+jnbChartHover]),3.5,0,Math.PI*2); ctx.fill();
         ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();
       });
       ctx.restore();
@@ -1559,7 +1588,7 @@ const Utils = {
   }
 
   function showJnbChartTooltip(event){
-    const count=jnbChartData[0].length;
+    const count=Math.min(JNB_CHART_WINDOW_POINTS,jnbChartData[0].length-jnbChartWindowStart);
     if(!count) return;
     const rect=jnbChartCanvas.getBoundingClientRect();
     const plotW=Math.max(1,rect.width-JNB_CHART_PAD.L-JNB_CHART_PAD.R);
@@ -1567,8 +1596,9 @@ const Utils = {
     const index=Math.max(0,Math.min(count-1,Math.round(ratio*(count-1))));
     jnbChartHover=index;
     scheduleJnbChartRedraw();
-    jnbChartTooltip.textContent='采样 #'+(jnbChartStart+index+1)+'\n'+
-      JNB_CHART_NAMES.map((name,k)=>name+': '+jnbChartData[k][index]).join('\n');
+    const sample=jnbChartWindowStart+index;
+    jnbChartTooltip.textContent='采样 #'+(sample+1)+'\n'+
+      JNB_CHART_NAMES.map((name,k)=>name+': '+jnbChartData[k][sample]).join('\n');
     jnbChartTooltip.style.display='block';
     const tw=jnbChartTooltip.offsetWidth, th=jnbChartTooltip.offsetHeight;
     const left=event.clientX+tw+14>window.innerWidth-8 ? event.clientX-tw-14 : event.clientX+14;
@@ -1585,13 +1615,33 @@ const Utils = {
   jnbChartCanvas.addEventListener('pointermove',showJnbChartTooltip);
   jnbChartCanvas.addEventListener('pointerdown',showJnbChartTooltip);
   jnbChartCanvas.addEventListener('pointerleave',hideJnbChartTooltip);
+  jnbChartRange.addEventListener('input',()=>{
+    jnbChartWindowStart=Number(jnbChartRange.value);
+    jnbChartFollowLatest=jnbChartWindowStart>=Number(jnbChartRange.max);
+    updateJnbChartNavigation();
+    hideJnbChartTooltip();
+    scheduleJnbChartRedraw();
+  });
+  btnJnbChartEarliest.addEventListener('click',()=>{
+    jnbChartWindowStart=0;
+    jnbChartFollowLatest=false;
+    updateJnbChartNavigation();
+    hideJnbChartTooltip();
+    scheduleJnbChartRedraw();
+  });
+  btnJnbChartLatest.addEventListener('click',()=>{
+    jnbChartFollowLatest=true;
+    updateJnbChartNavigation();
+    hideJnbChartTooltip();
+    scheduleJnbChartRedraw();
+  });
   btnJnbChartClear.addEventListener('click',resetJnbChart);
   btnJnbChartCopy.addEventListener('click',async ()=>{
     const count=jnbChartData[0].length;
     if(!count) return;
     const rows=['采样\tC\tT2\tB\tT1'];
     for(let i=0;i<count;i++){
-      rows.push([jnbChartStart+i+1,...jnbChartData.map(series=>series[i])].join('\t'));
+      rows.push([i+1,...jnbChartData.map(series=>series[i])].join('\t'));
     }
     const value=rows.join('\n');
     try{
@@ -1606,7 +1656,7 @@ const Utils = {
       finally{ input.remove(); }
       btnJnbChartCopy.textContent=copied?'已复制':'复制失败';
     }
-    setTimeout(()=>{ btnJnbChartCopy.textContent='复制数据'; },1500);
+    setTimeout(()=>{ btnJnbChartCopy.textContent='复制全部数据'; },1500);
   });
   btnJnbChartExpand.addEventListener('click',()=>{
     const expanded=jnbChartSection.classList.toggle('expanded');

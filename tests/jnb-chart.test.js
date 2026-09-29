@@ -13,14 +13,19 @@ function block(start, next) {
   return source.slice(from, to);
 }
 
-test('JNB packet feeds C/T2/B/T1 chart in protocol order and keeps 460 points', () => {
+test('JNB chart retains all C/T2/B/T1 samples and can keep an earlier 460-point view', () => {
   const context = {
     jnbPaused: false,
     JNB_CHART_FIELDS: ['C_live', 'T2_live', 'B_live', 'T1_live'],
-    JNB_CHART_MAX_POINTS: 460,
+    JNB_CHART_WINDOW_POINTS: 460,
     jnbChartData: [[], [], [], []],
-    jnbChartStart: 0,
+    jnbChartWindowStart: 0,
+    jnbChartFollowLatest: true,
     jnbChartHint: { textContent: '' },
+    jnbChartRangeInfo: { textContent: '' },
+    jnbChartRange: { max: '0', value: '0', disabled: true },
+    btnJnbChartEarliest: { disabled: true },
+    btnJnbChartLatest: { disabled: true },
     btnJnbChartCopy: { disabled: true },
     btnJnbChartClear: { disabled: true },
     scheduleJnbChartRedraw() {},
@@ -32,8 +37,8 @@ test('JNB packet feeds C/T2/B/T1 chart in protocol order and keeps 460 points', 
   };
   vm.createContext(context);
   vm.runInContext(
-    block('  function parseJnb(dv){', '  function resetJnbChart(){') +
-    block('  function appendJnbChartFrame(obj){', '  function drawJnbChart(){') +
+    block('  function parseJnb(dv){', '  function updateJnbChartNavigation(){') +
+    block('  function updateJnbChartNavigation(){', '  function drawJnbChart(){') +
     block('  function handleJnbPacket(dv){', '  function bytesHex(dv, start, end){'),
     context,
   );
@@ -55,10 +60,20 @@ test('JNB packet feeds C/T2/B/T1 chart in protocol order and keeps 460 points', 
   for (let i = 1; i < 462; i++) {
     context.appendJnbChartFrame({ C_live: i, T2_live: i + 1000, B_live: i + 2000, T1_live: i + 3000 });
   }
-  assert.equal(context.jnbChartData[0].length, 460);
-  assert.equal(context.jnbChartStart, 2);
-  assert.equal(context.jnbChartData[0][0], 2);
-  assert.equal(context.jnbChartData[0][459], 461);
+  assert.equal(context.jnbChartData[0].length, 462);
+  assert.equal(context.jnbChartData[0][0], 101);
+  assert.equal(context.jnbChartData[0][461], 461);
+  assert.equal(context.jnbChartWindowStart, 2);
+  assert.equal(context.jnbChartRange.max, '2');
+  assert.equal(context.jnbChartRangeInfo.textContent, '第 3–462 / 462 点');
+
+  context.jnbChartFollowLatest = false;
+  context.jnbChartWindowStart = 0;
+  context.appendJnbChartFrame({ C_live: 462, T2_live: 1462, B_live: 2462, T1_live: 3462 });
+  assert.equal(context.jnbChartData[0].length, 463);
+  assert.equal(context.jnbChartWindowStart, 0);
+  assert.equal(context.jnbChartRangeInfo.textContent, '第 1–460 / 463 点');
+  assert.equal(context.btnJnbChartLatest.disabled, false);
 });
 
 test('JNB starts updating after connection and restores paused state on feed failure', async () => {
