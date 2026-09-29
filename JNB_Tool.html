@@ -479,7 +479,7 @@
               <span><i class="lg-in"></i>接收</span>
               <span><i class="lg-err"></i>错误</span>
             </div>
-            <span style="font-size:.825rem;color:var(--text-muted);"><span id="logLineCount">0</span> 行</span>
+            <span style="font-size:.825rem;color:var(--text-muted);" title="页面最多显示最近 500 行，导出包含全部日志">累计 <span id="logLineCount">0</span> 行</span>
             <button class="btn btn-sm" id="btnClearLog">清空</button>
             <button class="btn btn-sm" id="btnExportLog" disabled>导出</button>
           </div>
@@ -658,7 +658,7 @@ const Utils = {
   const activePolls=new Map(); // characteristic -> intervalId
   const ffe2ResponseBuffer=[]; // FFE2 通知缓存，用于命令响应匹配
   let cmdBusy=false;
-  const MAX_RAW=500;
+  const MAX_RAW=500; // 仅限制页面日志节点；bleRawLines 保留完整导出历史
 
   // 初始化可拖拽高度日志区
   function initResizable(logEl){
@@ -1404,8 +1404,7 @@ const Utils = {
   function logToPanel(prefix,uuid,value){
     const line=`[${prefix} ${uuid} @ ${tsNow()}] ${value}`;
     bleRawLines.push(line);
-    if(bleRawLines.length>MAX_RAW){
-      bleRawLines.shift();
+    if(rawLog.childElementCount>=MAX_RAW){
       if(rawLog.firstChild) rawLog.removeChild(rawLog.firstChild);
     }
     const div=document.createElement('div');

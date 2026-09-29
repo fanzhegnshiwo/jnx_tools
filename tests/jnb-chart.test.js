@@ -102,3 +102,47 @@ test('JNB starts updating after connection and restores paused state on feed fai
   assert.equal(context.jnbPaused, true);
   assert.equal(button.textContent, '开始更新');
 });
+
+test('JNB log export keeps every entry while the page displays only the latest 500', () => {
+  const children = [];
+  const rawLog = {
+    get childElementCount() { return children.length; },
+    get firstChild() { return children[0] || null; },
+    appendChild(node) { children.push(node); },
+    removeChild(node) { children.splice(children.indexOf(node), 1); },
+    scrollHeight: 0,
+    scrollTop: 0,
+  };
+  let exportLog;
+  let exported = '';
+  const context = {
+    bleRawLines: [],
+    MAX_RAW: 500,
+    rawLog,
+    logLineCount: { textContent: '0' },
+    btnExportLog: {
+      disabled: true,
+      addEventListener: (_name, handler) => { exportLog = handler; },
+    },
+    tsNow: () => '12:00:00.000',
+    logCategory: () => 'in',
+    document: { createElement: () => ({ click() {} }) },
+    Blob: class { constructor(parts) { exported = parts.join(''); } },
+    URL: { createObjectURL: () => 'blob:test', revokeObjectURL() {} },
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    block('  function logToPanel(prefix,uuid,value){', '  function onCharChanged(event){') +
+    block("  btnExportLog.addEventListener('click',()=>{", '  // 刷新缓存'),
+    context,
+  );
+
+  for (let i = 1; i <= 501; i++) context.logToPanel('Data', 'FFE1', `frame ${i}`);
+  assert.equal(children.length, 500);
+  assert.match(children[0].textContent, /frame 2$/);
+  assert.equal(context.logLineCount.textContent, 501);
+  exportLog();
+  assert.equal(exported.trimEnd().split('\n').length, 501);
+  assert.match(exported, /frame 1\n/);
+  assert.match(exported, /frame 501\n$/);
+});
